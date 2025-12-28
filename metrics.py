@@ -1,29 +1,30 @@
-# metrics.py
-from config import CARBON_INTENSITY
+from config import GRID_CARBON_INTENSITY, DEADLINE_PENALTY_KWH
 
 class Metrics:
     def __init__(self):
         self.grid_energy = 0.0
         self.solar_energy = 0.0
         self.cooling_energy = 0.0
+        self.carbon = 0.0
+        self.deadline_penalty = 0.0
+        self.deadline_violations = 0
 
-    def add_energy(self, total_power_kw, solar_kw, time_hours):
-        if solar_kw >= total_power_kw:
-            self.solar_energy += total_power_kw * time_hours
-        else:
-            self.solar_energy += solar_kw * time_hours
-            self.grid_energy += (total_power_kw - solar_kw) * time_hours
+    def add_energy(self, load_kw, solar_kw, dt):
+        used_solar = min(load_kw, solar_kw)
+        grid = load_kw - used_solar
 
-    def add_cooling_energy(self, cooling_kw, time_hours):
-        self.cooling_energy += cooling_kw * time_hours
-        self.grid_energy += cooling_kw * time_hours  # cooling always grid
+        self.solar_energy += used_solar * dt
+        self.grid_energy += grid * dt
+        self.carbon += grid * dt * GRID_CARBON_INTENSITY
 
-    def total_grid_energy(self):
-        return self.grid_energy
+    def add_cooling(self, cooling_kw, dt):
+        self.cooling_energy += cooling_kw * dt
+        self.grid_energy += cooling_kw * dt
+        self.carbon += cooling_kw * dt * GRID_CARBON_INTENSITY
 
-    def total_energy(self):
-        return self.grid_energy + self.solar_energy
+    def add_deadline_penalty(self):
+        self.deadline_violations += 1
+        self.deadline_penalty += DEADLINE_PENALTY_KWH
 
-    # 🔥 NEW: Carbon-aware metric
-    def total_carbon_emissions(self):
-        return self.grid_energy * CARBON_INTENSITY
+    def effective_grid_energy(self):
+        return self.grid_energy + self.deadline_penalty

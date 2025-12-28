@@ -1,5 +1,3 @@
-# full_dashboard.py
-
 import streamlit as st
 import matplotlib.pyplot as plt
 from job import Job
@@ -23,9 +21,9 @@ ideal_temp = st.sidebar.slider("Ideal Hub Temperature (°C)", 20, 30, 25)
 # Job creation
 def create_jobs():
     return [
-        Job("AI Training", 3.5, 120, "HIGH", deadline=ai_training_deadline),
-        Job("Video Processing", 2.0, 60, "MEDIUM", deadline=video_deadline),
-        Job("Data Backup", 1.2, 90, "LOW", deadline=backup_deadline),
+        Job("AI Training", 3.5, 120, "HIGH", deadline_hour=ai_training_deadline),
+        Job("Video Processing", 2.0, 60, "MEDIUM", deadline_hour=video_deadline),
+        Job("Data Backup", 1.2, 90, "LOW", deadline_hour=backup_deadline),
     ]
 
 # Run Baseline
@@ -42,12 +40,12 @@ smart_metrics, time_s, grid_s, solar_s, cooling_s, temp_s = run_simulation(smart
 
 # Display Metrics
 st.subheader("Energy & Carbon Comparison")
-st.write(f"**Baseline Grid Energy:** {base_metrics.total_grid_energy():.2f} kWh")
-st.write(f"**Smart Grid Energy:** {smart_metrics.total_grid_energy():.2f} kWh")
-st.write(f"**Grid Energy Savings:** {(base_metrics.total_grid_energy() - smart_metrics.total_grid_energy()) / base_metrics.total_grid_energy() * 100:.2f} %")
-st.write(f"**Baseline Carbon Emissions:** {base_metrics.total_carbon_emissions():.2f} kg CO2")
-st.write(f"**Smart Carbon Emissions:** {smart_metrics.total_carbon_emissions():.2f} kg CO2")
-st.write(f"**Carbon Saved:** {base_metrics.total_carbon_emissions() - smart_metrics.total_carbon_emissions():.2f} kg CO2")
+st.write(f"**Baseline Grid Energy:** {base_metrics.effective_grid_energy():.2f} kWh")
+st.write(f"**Smart Grid Energy:** {smart_metrics.effective_grid_energy():.2f} kWh")
+st.write(f"**Grid Energy Savings:** {(base_metrics.effective_grid_energy() - smart_metrics.effective_grid_energy()) / base_metrics.effective_grid_energy() * 100:.2f} %")
+st.write(f"**Baseline Carbon Emissions:** {base_metrics.carbon:.2f} kg CO2")
+st.write(f"**Smart Carbon Emissions:** {smart_metrics.carbon:.2f} kg CO2")
+st.write(f"**Carbon Saved:** {base_metrics.carbon - smart_metrics.carbon:.2f} kg CO2")
 st.write(f"**Baseline Cooling Energy:** {sum(cooling_b):.2f} kWh")
 st.write(f"**Smart Cooling Energy:** {sum(cooling_s):.2f} kWh")
 
@@ -77,15 +75,14 @@ ax2.set_title("Data Hub Temperature")
 ax2.legend()
 st.pyplot(fig2)
 
-# Job Timeline
+# Job Timeline (simplified)
 st.subheader("Job Execution Timeline")
-def plot_job_timeline(jobs):
+def plot_job_timeline(jobs, dt_hours=10/60):
     fig, ax = plt.subplots(figsize=(12,4))
     for i, job in enumerate(jobs):
-        start = 0
-        duration = job.total_time / 60  # minutes to hours
-        ax.broken_barh([(start, duration)], (i*10, 9), facecolors=('tab:blue'))
-        ax.text(start + duration/2, i*10 + 4, job.name, ha='center', va='center', color='white')
+        duration_hr = job.remaining / 60  # Convert remaining minutes to hours
+        ax.broken_barh([(0, duration_hr)], (i*10, 9), facecolors=('tab:blue'))
+        ax.text(duration_hr/2, i*10 + 4, job.name, ha='center', va='center', color='white')
     ax.set_yticks([i*10 + 4.5 for i in range(len(jobs))])
     ax.set_yticklabels([job.name for job in jobs])
     ax.set_xlabel("Time (Hours)")

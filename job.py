@@ -1,19 +1,28 @@
 class Job:
-    def __init__(self, name, power_kw, duration_minutes, priority, deadline=None):
+    def __init__(self, name, power_kw, duration_min, priority, deadline_hour=None):
         self.name = name
         self.power_kw = power_kw
-        self.total_time = duration_minutes  # total duration
-        self.remaining_time = duration_minutes
-        self.priority = priority  # HIGH, MEDIUM, LOW
-        self.status = "PENDING"  # PENDING / RUNNING / DONE
-        self.deadline = deadline  # hour by which job must finish
+        self.remaining = duration_min
+        self.priority = priority
+        self.deadline = deadline_hour
+        self.status = "WAITING"
+        self.penalized = False
 
-    def run_step(self, step_minutes):
-        if self.status == "DONE":
-            return
-        self.remaining_time -= step_minutes
-        if self.remaining_time <= 0:
-            self.remaining_time = 0
+    def run_step(self, minutes):
+        if self.remaining <= 0:
             self.status = "DONE"
-        else:
-            self.status = "RUNNING"
+            return
+
+        self.remaining -= minutes
+        self.status = "RUNNING"
+
+        if self.remaining <= 0:
+            self.status = "DONE"
+
+    def deadline_missed(self, hour):
+        return (
+            self.deadline is not None
+            and hour > self.deadline
+            and self.status != "DONE"
+            and not self.penalized
+        )

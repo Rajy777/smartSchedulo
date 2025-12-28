@@ -1,8 +1,11 @@
-from config import IDEAL_TEMP , COOLING_COEFFICIENT
+from config import IDEAL_TEMP, COOLING_COEFFICIENT
 
-def cooling_power_kw(ambient_temp, compute_power_kw):
-    if ambient_temp <= IDEAL_TEMP:
+def cooling_power_kw(current_temp):
+    """
+    Returns cooling power (kW) required to bring temperature
+    toward IDEAL_TEMP.
+    """
+    if current_temp <= IDEAL_TEMP:
         return 0.0
 
-    delta = ambient_temp - IDEAL_TEMP
-    return COOLING_COEFFICIENT*delta*compute_power_kw
+    return (current_temp - IDEAL_TEMP) * COOLING_COEFFICIENT
