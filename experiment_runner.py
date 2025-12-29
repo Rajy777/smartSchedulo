@@ -37,7 +37,7 @@ def random_jobs(num_jobs=5, seed=None):
             name=f"Job-{i}",
             power_kw=round(random.uniform(0.8, 3.5), 2),
             duration_min=random.randint(30, 180),
-            priority=random.choice(["low", "medium", "high"]),  # ✅ FIXED: lowercase
+            priority=random.choice(["low", "medium", "high"]),  # ✅ lowercase
             deadline_hour=deadline
         ))
 
