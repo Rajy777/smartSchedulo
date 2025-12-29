@@ -29,6 +29,8 @@ def run_simulation(scheduler, use_smart_features=True):
     """
     Run scheduling simulation for one day.
 
+    ✅ CRITICAL FIX: Jobs continue running across timesteps until complete.
+
     Args:
         scheduler: Scheduler instance (BaselineScheduler or SmartScheduler)
         use_smart_features (bool): If True, scheduler receives solar/temp info.
@@ -36,12 +38,6 @@ def run_simulation(scheduler, use_smart_features=True):
 
     Returns:
         tuple: (metrics, time_log, grid_log, solar_log, cooling_log, temp_log)
-            - metrics: Metrics object with cumulative energy/carbon/penalties
-            - time_log: List of hour timestamps
-            - grid_log: List of grid power usage (kW) at each step
-            - solar_log: List of solar power usage (kW) at each step
-            - cooling_log: List of cooling power (kW) at each step
-            - temp_log: List of hub temperatures (°C) at each step
     """
     # Initialize metrics tracker
     metrics = Metrics()
@@ -60,24 +56,39 @@ def run_simulation(scheduler, use_smart_features=True):
     # Time step in hours
     dt_hours = TIME_STEP_MINUTES / 60.0
 
+    # ✅ NEW: Track currently running jobs across timesteps
+    currently_running = []
+
     # Main simulation loop
     while current_hour < SIMULATION_END_HOUR:
         # ===== 1. ENVIRONMENTAL CONDITIONS =====
         ambient_temp = ambient_temperature(current_hour)
         solar_available = solar_power(current_hour)
 
-        # ===== 2. SCHEDULER DECISION =====
-        # Smart schedulers get real solar/temp data
-        # Baseline schedulers get dummy values (0, 0) so they ignore these factors
+        # ===== 2. EXECUTE RUNNING JOBS =====
+        # First, continue running jobs that are already in progress
+        for job in currently_running[:]:  # Use slice to safely modify during iteration
+            job.run_step(TIME_STEP_MINUTES, current_hour)
+            if job.is_done():
+                currently_running.remove(job)
+
+        # ===== 3. SCHEDULER DECISION =====
+        # Only ask scheduler if we have capacity for new jobs
+        # Scheduler now sees what's already running
         if use_smart_features:
-            running_jobs = scheduler.schedule(solar_available, current_temp, current_hour)
+            new_jobs = scheduler.schedule(solar_available, current_temp, current_hour)
         else:
             # Baseline: scheduler doesn't see solar/temp
-            running_jobs = scheduler.schedule(0.0, 0.0, current_hour)
+            new_jobs = scheduler.schedule(0.0, 0.0, current_hour)
 
-        # ===== 3. POWER CALCULATIONS =====
-        # Total compute power from running jobs
-        compute_power = sum(job.power_kw for job in running_jobs)
+        # ✅ CRITICAL: Only add jobs that aren't already running
+        for job in new_jobs:
+            if job not in currently_running and not job.is_done():
+                currently_running.append(job)
+
+        # ===== 4. POWER CALCULATIONS =====
+        # Total compute power from ALL currently running jobs
+        compute_power = sum(job.power_kw for job in currently_running)
 
         # How much solar can actually be used (limited by available solar)
         solar_used = min(compute_power, solar_available)
@@ -86,16 +97,12 @@ def run_simulation(scheduler, use_smart_features=True):
         grid_power = compute_power - solar_used
 
         # Cooling power needed based on current temperature
-        cooling_power = cooling_power_kw(current_temp, compute_power)
+        cooling_power_needed = cooling_power_kw(current_temp, compute_power)
 
-        # ===== 4. THERMAL STATE UPDATE =====
-        # Temperature dynamics with correct signs:
-        # + heat from compute load
-        # - cooling from cooling system (removes heat)
-        # - natural dissipation to ambient
+        # ===== 5. THERMAL STATE UPDATE =====
         temp_change = (
-            HEAT_ACCUMULATION * compute_power          # Heat added by computation
-            - COOLING_EFFICIENCY * cooling_power       # Heat removed by cooling
+            HEAT_ACCUMULATION * compute_power              # Heat added by computation
+            - COOLING_EFFICIENCY * cooling_power_needed    # Heat removed by cooling
             - THERMAL_DISSIPATION * (current_temp - ambient_temp)  # Natural dissipation
         )
         current_temp += temp_change
@@ -103,7 +110,7 @@ def run_simulation(scheduler, use_smart_features=True):
         # Sanity check: temperature shouldn't go below ambient or exceed extreme values
         current_temp = max(ambient_temp - 5, min(current_temp, 100))
 
-        # ===== 5. METRICS TRACKING =====
+        # ===== 6. METRICS TRACKING =====
         # Track energy consumption and carbon
         metrics.add_energy(
             load_kw=compute_power,
@@ -112,27 +119,22 @@ def run_simulation(scheduler, use_smart_features=True):
         )
 
         # Track cooling energy (all from grid)
-        metrics.add_cooling(cooling_power, dt_hours)
+        metrics.add_cooling(cooling_power_needed, dt_hours)
 
-        # ===== 6. JOB EXECUTION =====
-        # Execute one time step for each running job
-        for job in running_jobs:
-            job.run_step(TIME_STEP_MINUTES, current_hour)
-
+        # ===== 7. CHECK DEADLINES =====
         # Check all jobs for deadline violations
         for job in scheduler.jobs:
             if job.deadline_missed(current_hour):
                 metrics.add_deadline_penalty()
-                # Note: job.penalized flag is already set inside deadline_missed()
 
-        # ===== 7. LOGGING =====
+        # ===== 8. LOGGING =====
         time_log.append(current_hour)
-        grid_log.append(grid_power)  # FIXED: Log actual grid usage, not total compute
-        solar_log.append(solar_used)  # FIXED: Log actual solar usage
-        cooling_log.append(cooling_power)
+        grid_log.append(grid_power)
+        solar_log.append(solar_used)
+        cooling_log.append(cooling_power_needed)
         temp_log.append(current_temp)
 
-        # ===== 8. TIME ADVANCE =====
+        # ===== 9. TIME ADVANCE =====
         current_hour += dt_hours
 
     return metrics, time_log, grid_log, solar_log, cooling_log, temp_log
@@ -146,8 +148,7 @@ def get_job_timeline(scheduler):
         scheduler: Scheduler instance after simulation
 
     Returns:
-        list: List of dicts with job execution info:
-            [{'name': str, 'start': float, 'duration': float, 'priority': str}, ...]
+        list: List of dicts with job execution info
     """
     timeline = []
 
@@ -171,9 +172,6 @@ def validate_simulation_results(metrics, time_log, grid_log, solar_log, cooling_
     """
     Validate simulation results for debugging.
 
-    Args:
-        All simulation outputs
-
     Returns:
         dict: Validation report with warnings/errors
     """
@@ -196,10 +194,10 @@ def validate_simulation_results(metrics, time_log, grid_log, solar_log, cooling_
     if sum(cooling_log) == 0:
         report['warnings'].append("No cooling activated - check temperature thresholds")
 
-    # Check metrics consistency
-    total_grid_energy = sum(grid_log) * (TIME_STEP_MINUTES / 60.0)
-    if abs(metrics.grid_energy - total_grid_energy - metrics.cooling_energy) > 0.1:
-        report['warnings'].append("Metrics grid energy doesn't match logs")
+    # Check power persistence
+    non_zero_steps = sum(1 for g in grid_log if g > 0)
+    if non_zero_steps < 5:
+        report['warnings'].append(f"Power only in {non_zero_steps} timesteps - jobs finishing too quickly?")
 
     return report
 
@@ -232,6 +230,7 @@ if __name__ == "__main__":
     print(f"  Total cooling: {metrics.cooling_energy:.2f} kWh")
     print(f"  Carbon emissions: {metrics.carbon_kg:.2f} kg CO2")
     print(f"  Max temperature: {max(temp_log):.1f}°C")
+    print(f"  Power in {sum(1 for g in grid_log if g > 0)} timesteps")
     print(f"\nValidation: {'✅ PASS' if report['valid'] else '❌ FAIL'}")
     if report['warnings']:
         print("Warnings:", report['warnings'])

@@ -34,10 +34,35 @@ st.markdown("Compare **Baseline** vs **Smart** scheduling for energy, carbon, an
 # ========================================
 st.sidebar.header("⚙️ Configuration")
 
-st.sidebar.subheader("📋 Job Deadlines")
-ai_training_deadline = st.sidebar.slider("AI Training Deadline (Hour)", 0, 24, 18)
-video_deadline = st.sidebar.slider("Video Processing Deadline (Hour)", 0, 24, 20)
-backup_deadline = st.sidebar.slider("Data Backup Deadline (Hour)", 0, 24, 23)
+st.sidebar.subheader("📋 Job Configuration")
+st.sidebar.info("💡 Set deadlines during solar hours (6-18) for maximum savings!")
+
+# Job 1
+st.sidebar.markdown("**Job 1 Settings**")
+job1_power = st.sidebar.slider("Job 1 Power (kW)", 1.0, 5.0, 3.5, 0.5)
+job1_duration = st.sidebar.slider("Job 1 Duration (min)", 30, 240, 120, 30)
+job1_deadline = st.sidebar.slider("Job 1 Deadline (hour)", 0, 24, 14)
+job1_priority = st.sidebar.selectbox("Job 1 Priority", ["high", "medium", "low"], index=0)
+
+st.sidebar.markdown("---")
+
+# Job 2
+st.sidebar.markdown("**Job 2 Settings**")
+job2_power = st.sidebar.slider("Job 2 Power (kW)", 1.0, 5.0, 2.5, 0.5)
+job2_duration = st.sidebar.slider("Job 2 Duration (min)", 30, 240, 150, 30)
+job2_deadline = st.sidebar.slider("Job 2 Deadline (hour)", 0, 24, 16)
+job2_priority = st.sidebar.selectbox("Job 2 Priority", ["high", "medium", "low"], index=1)
+
+st.sidebar.markdown("---")
+
+# Job 3
+st.sidebar.markdown("**Job 3 Settings**")
+job3_power = st.sidebar.slider("Job 3 Power (kW)", 1.0, 5.0, 1.5, 0.5)
+job3_duration = st.sidebar.slider("Job 3 Duration (min)", 30, 240, 90, 30)
+job3_deadline = st.sidebar.slider("Job 3 Deadline (hour)", 0, 24, 20)
+job3_priority = st.sidebar.selectbox("Job 3 Priority", ["high", "medium", "low"], index=2)
+
+st.sidebar.markdown("---")
 
 st.sidebar.subheader("🌡️ Temperature Settings")
 ideal_temp = st.sidebar.slider("Ideal Hub Temperature (°C)", 20, 30, 25)
@@ -48,34 +73,22 @@ num_experiments = st.sidebar.slider("Number of Experiments", 1, 20, 10)
 random_seed = st.sidebar.number_input("Random Seed (for reproducibility)", value=42, step=1)
 
 # ========================================
-# JOB CREATION
-# ========================================
-def create_jobs():
-    """
-    Create sample jobs with user-configured deadlines.
-    ✅ FIXED: Uses lowercase priorities
-    """
-    return [
-        Job("AI Training", 3.5, 120, "high", deadline_hour=ai_training_deadline),
-        Job("Video Processing", 2.0, 60, "medium", deadline_hour=video_deadline),
-        Job("Data Backup", 1.2, 90, "low", deadline_hour=backup_deadline),
-    ]
-
-# ========================================
 # RUN SIMULATIONS
 # ========================================
-@st.cache_data
-def run_comparison_simulation(ai_dl, video_dl, backup_dl):
+@st.cache_data(ttl=10)  # Cache expires after 10 seconds
+def run_comparison_simulation(j1_power, j1_dur, j1_dl, j1_pri,
+                               j2_power, j2_dur, j2_dl, j2_pri,
+                               j3_power, j3_dur, j3_dl, j3_pri):
     """
     Run baseline vs smart simulation with caching.
-    ✅ FIXED: Deep copies jobs, correct parameter names
+    ✅ FIXED: Deep copies jobs, correct parameter names, configurable jobs
     """
     try:
-        # Create jobs
+        # Create jobs from user configuration
         jobs = [
-            Job("AI Training", 3.5, 120, "high", deadline_hour=ai_dl),
-            Job("Video Processing", 2.0, 60, "medium", deadline_hour=video_dl),
-            Job("Data Backup", 1.2, 90, "low", deadline_hour=backup_dl),
+            Job("Job 1", j1_power, j1_dur, j1_pri, deadline_hour=j1_dl),
+            Job("Job 2", j2_power, j2_dur, j2_pri, deadline_hour=j2_dl),
+            Job("Job 3", j3_power, j3_dur, j3_pri, deadline_hour=j3_dl),
         ]
 
         # ✅ FIXED: Deep copy jobs for independent simulations
@@ -108,8 +121,12 @@ def run_comparison_simulation(ai_dl, video_dl, backup_dl):
         st.error(f"Simulation failed: {str(e)}")
         return None
 
-# Run simulation
-sim_results = run_comparison_simulation(ai_training_deadline, video_deadline, backup_deadline)
+# Run simulation with current configuration
+sim_results = run_comparison_simulation(
+    job1_power, job1_duration, job1_deadline, job1_priority,
+    job2_power, job2_duration, job2_deadline, job2_priority,
+    job3_power, job3_duration, job3_deadline, job3_priority
+)
 
 if sim_results is None:
     st.stop()
@@ -127,31 +144,39 @@ st.header("📊 Performance Metrics")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
+    cost_diff = base_metrics.total_cost() - smart_metrics.total_cost()
+    cost_pct = (cost_diff / base_metrics.total_cost() * 100) if base_metrics.total_cost() > 0 else 0
     st.metric(
         "💰 Cost Savings",
-        f"₹{base_metrics.total_cost() - smart_metrics.total_cost():.2f}",
-        f"{(base_metrics.total_cost() - smart_metrics.total_cost()) / base_metrics.total_cost() * 100:.1f}%"
+        f"₹{cost_diff:.2f}",
+        f"{cost_pct:.1f}%"
     )
 
 with col2:
+    grid_diff = base_metrics.total_grid_energy() - smart_metrics.total_grid_energy()
+    grid_pct = (grid_diff / base_metrics.total_grid_energy() * 100) if base_metrics.total_grid_energy() > 0 else 0
     st.metric(
         "⚡ Grid Energy Saved",
-        f"{base_metrics.total_grid_energy() - smart_metrics.total_grid_energy():.2f} kWh",
-        f"{(base_metrics.total_grid_energy() - smart_metrics.total_grid_energy()) / base_metrics.total_grid_energy() * 100:.1f}%"
+        f"{grid_diff:.2f} kWh",
+        f"{grid_pct:.1f}%"
     )
 
 with col3:
+    carbon_diff = base_metrics.carbon_kg - smart_metrics.carbon_kg
+    carbon_pct = (carbon_diff / base_metrics.carbon_kg * 100) if base_metrics.carbon_kg > 0 else 0
     st.metric(
         "🌱 Carbon Reduced",
-        f"{base_metrics.carbon_kg - smart_metrics.carbon_kg:.2f} kg CO₂",
-        f"{(base_metrics.carbon_kg - smart_metrics.carbon_kg) / base_metrics.carbon_kg * 100:.1f}%"
+        f"{carbon_diff:.2f} kg CO₂",
+        f"{carbon_pct:.1f}%"
     )
 
 with col4:
+    cooling_diff = base_metrics.cooling_energy - smart_metrics.cooling_energy
+    cooling_pct = (cooling_diff / base_metrics.cooling_energy * 100) if base_metrics.cooling_energy > 0 else 0
     st.metric(
         "❄️ Cooling Energy Saved",
-        f"{base_metrics.cooling_energy - smart_metrics.cooling_energy:.2f} kWh",
-        f"{(base_metrics.cooling_energy - smart_metrics.cooling_energy) / base_metrics.cooling_energy * 100:.1f}%" if base_metrics.cooling_energy > 0 else "N/A"
+        f"{cooling_diff:.2f} kWh",
+        f"{cooling_pct:.1f}%" if base_metrics.cooling_energy > 0 else "N/A"
     )
 
 # Detailed metrics table
@@ -198,7 +223,7 @@ with tab1:
     ax.plot(time_s, cooling_s, label="Smart Cooling", color='blue', linestyle=':', linewidth=2, alpha=0.7)
 
     # Solar
-    ax.plot(time_s, solar_s, label="Solar Available", color='gold', linestyle='--', linewidth=2, alpha=0.9)
+    ax.plot(time_s, solar_s, label="Solar Used", color='gold', linestyle='--', linewidth=2, alpha=0.9)
 
     ax.fill_between(time_s, solar_s, alpha=0.2, color='gold', label='Solar Generation')
 
@@ -213,7 +238,6 @@ with tab2:
     fig, ax = plt.subplots(figsize=(14, 6))
     ax.plot(time_b, grid_b, label="Grid Power", color='red', linewidth=2)
     ax.plot(time_b, cooling_b, label="Cooling Power", color='orange', linewidth=2)
-    ax.plot(time_b, solar_b, label="Solar Available", color='gold', linestyle='--', linewidth=2)
     ax.set_xlabel("Time (Hours)", fontsize=12)
     ax.set_ylabel("Power (kW)", fontsize=12)
     ax.set_title("Baseline Scheduler - Power Consumption", fontsize=14, fontweight='bold')
@@ -225,7 +249,7 @@ with tab3:
     fig, ax = plt.subplots(figsize=(14, 6))
     ax.plot(time_s, grid_s, label="Grid Power", color='green', linewidth=2)
     ax.plot(time_s, cooling_s, label="Cooling Power", color='blue', linewidth=2)
-    ax.plot(time_s, solar_s, label="Solar Available", color='gold', linestyle='--', linewidth=2)
+    ax.plot(time_s, solar_s, label="Solar Used", color='gold', linestyle='--', linewidth=2)
     ax.fill_between(time_s, solar_s, alpha=0.2, color='gold')
     ax.set_xlabel("Time (Hours)", fontsize=12)
     ax.set_ylabel("Power (kW)", fontsize=12)
@@ -342,9 +366,9 @@ if st.button("🚀 Run Experiments", type="primary"):
         grid_savings = [r["base_grid"] - r["smart_grid"] for r in results]
         carbon_savings = [r["base_carbon"] - r["smart_carbon"] for r in results]
 
-        avg_cost_saving = sum(cost_savings) / len(cost_savings)
-        avg_grid_saving = sum(grid_savings) / len(grid_savings)
-        avg_carbon_saving = sum(carbon_savings) / len(carbon_savings)
+        avg_cost_saving = sum(cost_savings) / len(cost_savings) if cost_savings else 0
+        avg_grid_saving = sum(grid_savings) / len(grid_savings) if grid_savings else 0
+        avg_carbon_saving = sum(carbon_savings) / len(carbon_savings) if carbon_savings else 0
 
         # Display results
         st.success(f"✅ Completed {num_experiments} experiments!")
