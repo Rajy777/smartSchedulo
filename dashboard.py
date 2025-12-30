@@ -1,185 +1,269 @@
 """
-Streamlit Dashboard for Smart Data Hub Energy Scheduler.
+Enhanced Dashboard with Dataset Upload Support.
 
-Provides interactive visualization of:
-- Energy consumption (grid, solar, cooling)
-- Temperature management
-- Carbon emissions
-- Job execution timeline
-- Multi-experiment comparison
+✅ Allows CSV uploads for solar, temperature, jobs
+✅ Falls back to hardcoded models if no upload
+✅ Shows dataset status clearly
 """
 
 import streamlit as st
 import matplotlib.pyplot as plt
 import copy
+import tempfile
+import os
 from job import Job
 from scheduler import SmartScheduler
 from baseline_scheduler import BaselineScheduler
 from simulation_runner import run_simulation
-from experiment_runner import run_experiments, summarize, print_detailed_results
-from config import TIME_STEP_MINUTES
+from data_adapter import (
+    create_solar_source,
+    create_temperature_source,
+    load_jobs_from_csv
+)
 
 # Page configuration
 st.set_page_config(
-    page_title="Smart Scheduler Dashboard",
+    page_title="Smart Scheduler with Datasets",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("🔋 Smart Data Hub Energy Scheduler Dashboard")
-st.markdown("Compare **Baseline** vs **Smart** scheduling for energy, carbon, and cost optimization")
+st.title("🔋 Smart Data Hub Energy Scheduler")
+st.markdown("**Enhanced Edition**: Upload real datasets or use built-in models")
 
 # ========================================
-# SIDEBAR CONTROLS
+# SIDEBAR - DATASET UPLOADS
 # ========================================
-st.sidebar.header("⚙️ Configuration")
+st.sidebar.header("📁 Dataset Upload")
 
-st.sidebar.subheader("📋 Job Configuration")
-st.sidebar.info("💡 Set deadlines during solar hours (6-18) for maximum savings!")
+with st.sidebar.expander("🌞 Solar Power Dataset", expanded=False):
+    st.markdown("""
+    **Format**: CSV with columns:
+    - `hour` (0-24)
+    - `solar_kw` (power in kW)
 
-# Job 1
-st.sidebar.markdown("**Job 1 Settings**")
-job1_power = st.sidebar.slider("Job 1 Power (kW)", 1.0, 5.0, 3.5, 0.5)
-job1_duration = st.sidebar.slider("Job 1 Duration (min)", 30, 240, 120, 30)
-job1_deadline = st.sidebar.slider("Job 1 Deadline (hour)", 0, 24, 14)
-job1_priority = st.sidebar.selectbox("Job 1 Priority", ["high", "medium", "low"], index=0)
+    **Example**:
+    ```
+    hour,solar_kw
+    0,0
+    6,1.5
+    12,8.0
+    18,2.0
+    ```
+    """)
+    solar_file = st.file_uploader("Upload Solar CSV", type=['csv'], key='solar')
+
+with st.sidebar.expander("🌡️ Temperature Dataset", expanded=False):
+    st.markdown("""
+    **Format**: CSV with columns:
+    - `hour` (0-24)
+    - `temp_c` (temperature in °C)
+
+    **Example**:
+    ```
+    hour,temp_c
+    0,26
+    12,42
+    18,35
+    ```
+    """)
+    temp_file = st.file_uploader("Upload Temperature CSV", type=['csv'], key='temp')
+
+with st.sidebar.expander("🧠 Jobs/Workload Dataset", expanded=False):
+    st.markdown("""
+    **Format**: CSV with columns:
+    - `name` (job name)
+    - `power_kw` (power consumption)
+    - `duration_min` (duration in minutes)
+    - `priority` (high/medium/low)
+    - `deadline_hour` (optional, 0-24)
+
+    **Example**:
+    ```
+    name,power_kw,duration_min,priority,deadline_hour
+    AI Training,3.5,120,high,18
+    Backup,1.2,90,low,23
+    ```
+    """)
+    jobs_file = st.file_uploader("Upload Jobs CSV", type=['csv'], key='jobs')
 
 st.sidebar.markdown("---")
 
-# Job 2
-st.sidebar.markdown("**Job 2 Settings**")
-job2_power = st.sidebar.slider("Job 2 Power (kW)", 1.0, 5.0, 2.5, 0.5)
-job2_duration = st.sidebar.slider("Job 2 Duration (min)", 30, 240, 150, 30)
-job2_deadline = st.sidebar.slider("Job 2 Deadline (hour)", 0, 24, 16)
-job2_priority = st.sidebar.selectbox("Job 2 Priority", ["high", "medium", "low"], index=1)
+# ========================================
+# DATASET STATUS DISPLAY
+# ========================================
+st.sidebar.subheader("📊 Dataset Status")
+
+solar_status = "✅ CSV Loaded" if solar_file else "🔄 Using Model"
+temp_status = "✅ CSV Loaded" if temp_file else "🔄 Using Model"
+jobs_status = "✅ CSV Loaded" if jobs_file else "🔄 Using Default"
+
+st.sidebar.markdown(f"""
+- **Solar**: {solar_status}
+- **Temperature**: {temp_status}
+- **Jobs**: {jobs_status}
+""")
 
 st.sidebar.markdown("---")
 
-# Job 3
-st.sidebar.markdown("**Job 3 Settings**")
-job3_power = st.sidebar.slider("Job 3 Power (kW)", 1.0, 5.0, 1.5, 0.5)
-job3_duration = st.sidebar.slider("Job 3 Duration (min)", 30, 240, 90, 30)
-job3_deadline = st.sidebar.slider("Job 3 Deadline (hour)", 0, 24, 20)
-job3_priority = st.sidebar.selectbox("Job 3 Priority", ["high", "medium", "low"], index=2)
+# ========================================
+# MANUAL JOB CONFIGURATION (if no CSV)
+# ========================================
+if not jobs_file:
+    st.sidebar.subheader("📋 Manual Job Configuration")
+    st.sidebar.info("💡 Set deadlines during solar hours (6-18) for best results!")
 
-st.sidebar.markdown("---")
+    # Job 1
+    with st.sidebar.expander("Job 1 Settings", expanded=False):
+        job1_power = st.slider("Power (kW)", 1.0, 5.0, 3.5, 0.5, key='j1p')
+        job1_duration = st.slider("Duration (min)", 30, 240, 120, 30, key='j1d')
+        job1_deadline = st.slider("Deadline (hour)", 0, 24, 14, key='j1dl')
+        job1_priority = st.selectbox("Priority", ["high", "medium", "low"], 0, key='j1pr')
 
-st.sidebar.subheader("🌡️ Temperature Settings")
-ideal_temp = st.sidebar.slider("Ideal Hub Temperature (°C)", 20, 30, 25)
-thermal_threshold = st.sidebar.slider("Thermal Threshold (°C)", 28, 36, 32)
+    # Job 2
+    with st.sidebar.expander("Job 2 Settings", expanded=False):
+        job2_power = st.slider("Power (kW)", 1.0, 5.0, 2.5, 0.5, key='j2p')
+        job2_duration = st.slider("Duration (min)", 30, 240, 150, 30, key='j2d')
+        job2_deadline = st.slider("Deadline (hour)", 0, 24, 16, key='j2dl')
+        job2_priority = st.selectbox("Priority", ["high", "medium", "low"], 1, key='j2pr')
 
-st.sidebar.subheader("🧪 Experiment Settings")
-num_experiments = st.sidebar.slider("Number of Experiments", 1, 20, 10)
-random_seed = st.sidebar.number_input("Random Seed (for reproducibility)", value=42, step=1)
+    # Job 3
+    with st.sidebar.expander("Job 3 Settings", expanded=False):
+        job3_power = st.slider("Power (kW)", 1.0, 5.0, 1.5, 0.5, key='j3p')
+        job3_duration = st.slider("Duration (min)", 30, 240, 90, 30, key='j3d')
+        job3_deadline = st.slider("Deadline (hour)", 0, 24, 20, key='j3dl')
+        job3_priority = st.selectbox("Priority", ["high", "medium", "low"], 2, key='j3pr')
+
+# ========================================
+# PROCESS UPLOADED DATASETS
+# ========================================
+
+# Solar data source
+solar_source = None
+if solar_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.csv', mode='wb') as f:
+        f.write(solar_file.getvalue())
+        solar_csv_path = f.name
+    solar_source = create_solar_source(csv_path=solar_csv_path)
+    if not solar_source.is_loaded():
+        st.error("❌ Failed to load solar CSV. Using model fallback.")
+        solar_source = None
+else:
+    solar_source = create_solar_source(csv_path=None)
+
+# Temperature data source
+temp_source = None
+if temp_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.csv', mode='wb') as f:
+        f.write(temp_file.getvalue())
+        temp_csv_path = f.name
+    temp_source = create_temperature_source(csv_path=temp_csv_path)
+    if not temp_source.is_loaded():
+        st.error("❌ Failed to load temperature CSV. Using model fallback.")
+        temp_source = None
+else:
+    temp_source = create_temperature_source(csv_path=None)
+
+# Jobs
+jobs = []
+if jobs_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.csv', mode='wb') as f:
+        f.write(jobs_file.getvalue())
+        jobs_csv_path = f.name
+    try:
+        jobs = load_jobs_from_csv(jobs_csv_path)
+        st.success(f"✅ Loaded {len(jobs)} jobs from CSV")
+    except Exception as e:
+        st.error(f"❌ Failed to load jobs CSV: {e}")
+        jobs = []
+else:
+    # Use manual configuration
+    jobs = [
+        Job("Job 1", job1_power, job1_duration, job1_priority, job1_deadline),
+        Job("Job 2", job2_power, job2_duration, job2_priority, job2_deadline),
+        Job("Job 3", job3_power, job3_duration, job3_priority, job3_deadline),
+    ]
 
 # ========================================
 # RUN SIMULATIONS
 # ========================================
-@st.cache_data(ttl=10)  # Cache expires after 10 seconds
-def run_comparison_simulation(j1_power, j1_dur, j1_dl, j1_pri,
-                               j2_power, j2_dur, j2_dl, j2_pri,
-                               j3_power, j3_dur, j3_dl, j3_pri):
-    """
-    Run baseline vs smart simulation with caching.
-    ✅ FIXED: Deep copies jobs, correct parameter names, configurable jobs
-    """
-    try:
-        # Create jobs from user configuration
-        jobs = [
-            Job("Job 1", j1_power, j1_dur, j1_pri, deadline_hour=j1_dl),
-            Job("Job 2", j2_power, j2_dur, j2_pri, deadline_hour=j2_dl),
-            Job("Job 3", j3_power, j3_dur, j3_pri, deadline_hour=j3_dl),
-        ]
 
-        # ✅ FIXED: Deep copy jobs for independent simulations
-        baseline_jobs = copy.deepcopy(jobs)
-        smart_jobs = copy.deepcopy(jobs)
+@st.cache_data(ttl=5)
+def run_comparison_with_datasets(_solar_src, _temp_src, _jobs_list):
+    """Run simulations with provided data sources."""
 
-        # Run Baseline
-        baseline = BaselineScheduler()
-        for job in baseline_jobs:
-            baseline.add_job(job)
-        base_metrics, time_b, grid_b, solar_b, cooling_b, temp_b = run_simulation(
-            baseline,
-            use_smart_features=False  # ✅ FIXED: correct parameter name
-        )
+    # Deep copy jobs for independent simulations
+    baseline_jobs = copy.deepcopy(_jobs_list)
+    smart_jobs = copy.deepcopy(_jobs_list)
 
-        # Run Smart
-        smart = SmartScheduler()
-        for job in smart_jobs:
-            smart.add_job(job)
-        smart_metrics, time_s, grid_s, solar_s, cooling_s, temp_s = run_simulation(
-            smart,
-            use_smart_features=True  # ✅ FIXED: correct parameter name
-        )
+    # Run Baseline
+    baseline = BaselineScheduler()
+    for job in baseline_jobs:
+        baseline.add_job(job)
 
-        return (base_metrics, time_b, grid_b, solar_b, cooling_b, temp_b,
-                smart_metrics, time_s, grid_s, solar_s, cooling_s, temp_s,
-                baseline_jobs, smart_jobs)
+    base_metrics, time_b, grid_b, solar_b, cooling_b, temp_b = run_simulation(
+        baseline,
+        use_smart_features=False,
+        solar_source=_solar_src,
+        temperature_source=_temp_src
+    )
 
-    except Exception as e:
-        st.error(f"Simulation failed: {str(e)}")
-        return None
+    # Run Smart
+    smart = SmartScheduler()
+    for job in smart_jobs:
+        smart.add_job(job)
 
-# Run simulation with current configuration
-sim_results = run_comparison_simulation(
-    job1_power, job1_duration, job1_deadline, job1_priority,
-    job2_power, job2_duration, job2_deadline, job2_priority,
-    job3_power, job3_duration, job3_deadline, job3_priority
-)
+    smart_metrics, time_s, grid_s, solar_s, cooling_s, temp_s = run_simulation(
+        smart,
+        use_smart_features=True,
+        solar_source=_solar_src,
+        temperature_source=_temp_src
+    )
 
-if sim_results is None:
+    return (base_metrics, time_b, grid_b, solar_b, cooling_b, temp_b,
+            smart_metrics, time_s, grid_s, solar_s, cooling_s, temp_s,
+            baseline_jobs, smart_jobs)
+
+# Run simulation
+if len(jobs) == 0:
+    st.error("❌ No jobs defined! Upload jobs CSV or configure manually.")
     st.stop()
+
+sim_results = run_comparison_with_datasets(solar_source, temp_source, jobs)
 
 (base_metrics, time_b, grid_b, solar_b, cooling_b, temp_b,
  smart_metrics, time_s, grid_s, solar_s, cooling_s, temp_s,
  baseline_jobs, smart_jobs) = sim_results
 
 # ========================================
-# METRICS COMPARISON
+# METRICS DISPLAY
 # ========================================
 st.header("📊 Performance Metrics")
 
-# Create 4 columns for key metrics
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     cost_diff = base_metrics.total_cost() - smart_metrics.total_cost()
     cost_pct = (cost_diff / base_metrics.total_cost() * 100) if base_metrics.total_cost() > 0 else 0
-    st.metric(
-        "💰 Cost Savings",
-        f"₹{cost_diff:.2f}",
-        f"{cost_pct:.1f}%"
-    )
+    st.metric("💰 Cost Savings", f"₹{cost_diff:.2f}", f"{cost_pct:.1f}%")
 
 with col2:
     grid_diff = base_metrics.total_grid_energy() - smart_metrics.total_grid_energy()
     grid_pct = (grid_diff / base_metrics.total_grid_energy() * 100) if base_metrics.total_grid_energy() > 0 else 0
-    st.metric(
-        "⚡ Grid Energy Saved",
-        f"{grid_diff:.2f} kWh",
-        f"{grid_pct:.1f}%"
-    )
+    st.metric("⚡ Grid Saved", f"{grid_diff:.2f} kWh", f"{grid_pct:.1f}%")
 
 with col3:
     carbon_diff = base_metrics.carbon_kg - smart_metrics.carbon_kg
     carbon_pct = (carbon_diff / base_metrics.carbon_kg * 100) if base_metrics.carbon_kg > 0 else 0
-    st.metric(
-        "🌱 Carbon Reduced",
-        f"{carbon_diff:.2f} kg CO₂",
-        f"{carbon_pct:.1f}%"
-    )
+    st.metric("🌱 Carbon Reduced", f"{carbon_diff:.2f} kg", f"{carbon_pct:.1f}%")
 
 with col4:
-    cooling_diff = base_metrics.cooling_energy - smart_metrics.cooling_energy
-    cooling_pct = (cooling_diff / base_metrics.cooling_energy * 100) if base_metrics.cooling_energy > 0 else 0
-    st.metric(
-        "❄️ Cooling Energy Saved",
-        f"{cooling_diff:.2f} kWh",
-        f"{cooling_pct:.1f}%" if base_metrics.cooling_energy > 0 else "N/A"
-    )
+    st.metric("☀️ Solar Used", f"{smart_metrics.solar_energy:.2f} kWh",
+              f"{smart_metrics.solar_percentage():.1f}%")
 
-# Detailed metrics table
+# ========================================
+# DETAILED COMPARISON
+# ========================================
 st.subheader("📋 Detailed Comparison")
 
 col1, col2 = st.columns(2)
@@ -189,234 +273,96 @@ with col1:
     st.write(f"Total Cost: ₹{base_metrics.total_cost():.2f}")
     st.write(f"Grid Energy: {base_metrics.grid_energy:.2f} kWh")
     st.write(f"Solar Energy: {base_metrics.solar_energy:.2f} kWh")
-    st.write(f"Cooling Energy: {base_metrics.cooling_energy:.2f} kWh")
-    st.write(f"Total Grid (incl. cooling): {base_metrics.total_grid_energy():.2f} kWh")
-    st.write(f"Carbon Emissions: {base_metrics.carbon_kg:.2f} kg CO₂")
-    st.write(f"Deadline Violations: {base_metrics.deadline_violations}")
+    st.write(f"Cooling: {base_metrics.cooling_energy:.2f} kWh")
+    st.write(f"Carbon: {base_metrics.carbon_kg:.2f} kg CO₂")
+    st.write(f"Violations: {base_metrics.deadline_violations}")
 
 with col2:
     st.markdown("**Smart Scheduler**")
     st.write(f"Total Cost: ₹{smart_metrics.total_cost():.2f}")
     st.write(f"Grid Energy: {smart_metrics.grid_energy:.2f} kWh")
     st.write(f"Solar Energy: {smart_metrics.solar_energy:.2f} kWh")
-    st.write(f"Cooling Energy: {smart_metrics.cooling_energy:.2f} kWh")
-    st.write(f"Total Grid (incl. cooling): {smart_metrics.total_grid_energy():.2f} kWh")
-    st.write(f"Carbon Emissions: {smart_metrics.carbon_kg:.2f} kg CO₂")
-    st.write(f"Deadline Violations: {smart_metrics.deadline_violations}")
+    st.write(f"Cooling: {smart_metrics.cooling_energy:.2f} kWh")
+    st.write(f"Carbon: {smart_metrics.carbon_kg:.2f} kg CO₂")
+    st.write(f"Violations: {smart_metrics.deadline_violations}")
 
 # ========================================
-# ENERGY & POWER VISUALIZATION
+# VISUALIZATIONS
 # ========================================
-st.header("⚡ Energy & Power Analysis")
+st.header("⚡ Energy Analysis")
 
-tab1, tab2, tab3 = st.tabs(["Combined View", "Baseline Only", "Smart Only"])
-
-with tab1:
-    fig, ax = plt.subplots(figsize=(14, 6))
-
-    # Baseline
-    ax.plot(time_b, grid_b, label="Baseline Grid", color='red', linewidth=2, alpha=0.7)
-    ax.plot(time_b, cooling_b, label="Baseline Cooling", color='orange', linestyle=':', linewidth=2, alpha=0.7)
-
-    # Smart
-    ax.plot(time_s, grid_s, label="Smart Grid", color='green', linewidth=2, alpha=0.7)
-    ax.plot(time_s, cooling_s, label="Smart Cooling", color='blue', linestyle=':', linewidth=2, alpha=0.7)
-
-    # Solar
-    ax.plot(time_s, solar_s, label="Solar Used", color='gold', linestyle='--', linewidth=2, alpha=0.9)
-
-    ax.fill_between(time_s, solar_s, alpha=0.2, color='gold', label='Solar Generation')
-
-    ax.set_xlabel("Time (Hours)", fontsize=12)
-    ax.set_ylabel("Power (kW)", fontsize=12)
-    ax.set_title("Energy & Cooling Over Time - Baseline vs Smart", fontsize=14, fontweight='bold')
-    ax.legend(loc='upper right')
-    ax.grid(True, alpha=0.3)
-    st.pyplot(fig)
-
-with tab2:
-    fig, ax = plt.subplots(figsize=(14, 6))
-    ax.plot(time_b, grid_b, label="Grid Power", color='red', linewidth=2)
-    ax.plot(time_b, cooling_b, label="Cooling Power", color='orange', linewidth=2)
-    ax.set_xlabel("Time (Hours)", fontsize=12)
-    ax.set_ylabel("Power (kW)", fontsize=12)
-    ax.set_title("Baseline Scheduler - Power Consumption", fontsize=14, fontweight='bold')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    st.pyplot(fig)
-
-with tab3:
-    fig, ax = plt.subplots(figsize=(14, 6))
-    ax.plot(time_s, grid_s, label="Grid Power", color='green', linewidth=2)
-    ax.plot(time_s, cooling_s, label="Cooling Power", color='blue', linewidth=2)
-    ax.plot(time_s, solar_s, label="Solar Used", color='gold', linestyle='--', linewidth=2)
-    ax.fill_between(time_s, solar_s, alpha=0.2, color='gold')
-    ax.set_xlabel("Time (Hours)", fontsize=12)
-    ax.set_ylabel("Power (kW)", fontsize=12)
-    ax.set_title("Smart Scheduler - Power Consumption", fontsize=14, fontweight='bold')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    st.pyplot(fig)
-
-# ========================================
-# TEMPERATURE VISUALIZATION
-# ========================================
-st.header("🌡️ Temperature Management")
-
-fig, ax = plt.subplots(figsize=(14, 5))
-ax.plot(time_b, temp_b, label="Baseline Temperature", color='red', linewidth=2)
-ax.plot(time_s, temp_s, label="Smart Temperature", color='green', linewidth=2)
-ax.axhline(y=ideal_temp, color='blue', linestyle='--', linewidth=2, label=f'Ideal Temp ({ideal_temp}°C)')
-ax.axhline(y=thermal_threshold, color='orange', linestyle='--', linewidth=2, label=f'Thermal Threshold ({thermal_threshold}°C)')
-
-ax.fill_between(time_b, ideal_temp, thermal_threshold, alpha=0.2, color='yellow', label='Safe Zone')
-ax.fill_between(time_b, thermal_threshold, max(max(temp_b), max(temp_s)) + 2, alpha=0.2, color='red', label='Danger Zone')
-
-ax.set_xlabel("Time (Hours)", fontsize=12)
-ax.set_ylabel("Temperature (°C)", fontsize=12)
-ax.set_title("Hub Temperature - Baseline vs Smart", fontsize=14, fontweight='bold')
-ax.legend(loc='upper right')
+fig, ax = plt.subplots(figsize=(14, 6))
+ax.plot(time_b, grid_b, label="Baseline Grid", color='red', linewidth=2, alpha=0.7)
+ax.plot(time_s, grid_s, label="Smart Grid", color='green', linewidth=2, alpha=0.7)
+ax.plot(time_s, solar_s, label="Solar Used", color='gold', linestyle='--', linewidth=2)
+ax.fill_between(time_s, solar_s, alpha=0.2, color='gold')
+ax.set_xlabel("Time (Hours)")
+ax.set_ylabel("Power (kW)")
+ax.set_title("Grid vs Solar - Baseline vs Smart")
+ax.legend()
 ax.grid(True, alpha=0.3)
 st.pyplot(fig)
 
-# Temperature statistics
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("**Baseline Temperature Stats**")
-    st.write(f"Average: {sum(temp_b)/len(temp_b):.1f}°C")
-    st.write(f"Max: {max(temp_b):.1f}°C")
-    st.write(f"Min: {min(temp_b):.1f}°C")
-
-with col2:
-    st.markdown("**Smart Temperature Stats**")
-    st.write(f"Average: {sum(temp_s)/len(temp_s):.1f}°C")
-    st.write(f"Max: {max(temp_s):.1f}°C")
-    st.write(f"Min: {min(temp_s):.1f}°C")
+# Temperature
+st.header("🌡️ Temperature Profile")
+fig, ax = plt.subplots(figsize=(14, 5))
+ax.plot(time_b, temp_b, label="Baseline", color='red', linewidth=2)
+ax.plot(time_s, temp_s, label="Smart", color='green', linewidth=2)
+ax.set_xlabel("Time (Hours)")
+ax.set_ylabel("Temperature (°C)")
+ax.set_title("Hub Temperature Over Time")
+ax.legend()
+ax.grid(True, alpha=0.3)
+st.pyplot(fig)
 
 # ========================================
-# JOB EXECUTION TIMELINE
+# JOB TIMELINE
 # ========================================
 st.header("📅 Job Execution Timeline")
 
-def plot_job_timeline(baseline_jobs, smart_jobs):
-    """
-    ✅ FIXED: Shows actual execution timeline based on start_hour
-    """
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 6), sharex=True)
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 6), sharex=True)
 
-    # Baseline timeline
-    for i, job in enumerate(baseline_jobs):
-        if job.start_hour is not None:
-            duration_hr = job.duration / 60
-            ax1.barh(i, duration_hr, left=job.start_hour, height=0.8,
-                    color='red', alpha=0.7, edgecolor='black')
-            ax1.text(job.start_hour + duration_hr/2, i, job.name,
-                    ha='center', va='center', fontweight='bold', fontsize=9)
+for i, job in enumerate(baseline_jobs):
+    if job.start_hour is not None:
+        duration_hr = job.duration / 60
+        ax1.barh(i, duration_hr, left=job.start_hour, height=0.8,
+                color='red', alpha=0.7, edgecolor='black')
+        ax1.text(job.start_hour + duration_hr/2, i, job.name,
+                ha='center', va='center', fontweight='bold', fontsize=9)
 
-    ax1.set_yticks(range(len(baseline_jobs)))
-    ax1.set_yticklabels([job.name for job in baseline_jobs])
-    ax1.set_title("Baseline Scheduler", fontweight='bold')
-    ax1.set_xlim(0, 24)
-    ax1.grid(True, alpha=0.3, axis='x')
+ax1.set_yticks(range(len(baseline_jobs)))
+ax1.set_yticklabels([job.name for job in baseline_jobs])
+ax1.set_title("Baseline Scheduler", fontweight='bold')
+ax1.set_xlim(0, 24)
+ax1.grid(True, alpha=0.3, axis='x')
 
-    # Smart timeline
-    for i, job in enumerate(smart_jobs):
-        if job.start_hour is not None:
-            duration_hr = job.duration / 60
-            color = {'high': 'darkgreen', 'medium': 'orange', 'low': 'lightblue'}[job.priority]
-            ax2.barh(i, duration_hr, left=job.start_hour, height=0.8,
-                    color=color, alpha=0.7, edgecolor='black')
-            ax2.text(job.start_hour + duration_hr/2, i, job.name,
-                    ha='center', va='center', fontweight='bold', fontsize=9)
+for i, job in enumerate(smart_jobs):
+    if job.start_hour is not None:
+        duration_hr = job.duration / 60
+        color = {'high': 'darkgreen', 'medium': 'orange', 'low': 'lightblue'}[job.priority]
+        ax2.barh(i, duration_hr, left=job.start_hour, height=0.8,
+                color=color, alpha=0.7, edgecolor='black')
+        ax2.text(job.start_hour + duration_hr/2, i, job.name,
+                ha='center', va='center', fontweight='bold', fontsize=9)
+        if job.deadline is not None:
+            ax2.axvline(x=job.deadline, color='red', linestyle='--', alpha=0.5, linewidth=1)
 
-            # Show deadline
-            if job.deadline is not None:
-                ax2.axvline(x=job.deadline, color='red', linestyle='--', alpha=0.5, linewidth=1)
+ax2.set_yticks(range(len(smart_jobs)))
+ax2.set_yticklabels([job.name for job in smart_jobs])
+ax2.set_xlabel("Time (Hours)")
+ax2.set_title("Smart Scheduler (color = priority)", fontweight='bold')
+ax2.set_xlim(0, 24)
+ax2.grid(True, alpha=0.3, axis='x')
 
-    ax2.set_yticks(range(len(smart_jobs)))
-    ax2.set_yticklabels([job.name for job in smart_jobs])
-    ax2.set_xlabel("Time (Hours)", fontsize=12)
-    ax2.set_title("Smart Scheduler (color = priority)", fontweight='bold')
-    ax2.set_xlim(0, 24)
-    ax2.grid(True, alpha=0.3, axis='x')
-
-    plt.tight_layout()
-    st.pyplot(fig)
-
-plot_job_timeline(baseline_jobs, smart_jobs)
-
-# ========================================
-# MULTI-EXPERIMENT ANALYSIS
-# ========================================
-st.header("🧪 Multi-Experiment Analysis")
-
-st.markdown(f"""
-Run **{num_experiments}** experiments with random job configurations to validate
-the smart scheduler's performance across diverse scenarios.
-""")
-
-if st.button("🚀 Run Experiments", type="primary"):
-    with st.spinner(f"Running {num_experiments} experiments..."):
-        # ✅ FIXED: Uses corrected run_experiments with seed
-        results = run_experiments(n=num_experiments, seed=int(random_seed))
-
-        # Calculate summary statistics
-        cost_savings = [(r["base_cost"] - r["smart_cost"]) / r["base_cost"] * 100
-                       for r in results if r["base_cost"] > 0]
-        grid_savings = [r["base_grid"] - r["smart_grid"] for r in results]
-        carbon_savings = [r["base_carbon"] - r["smart_carbon"] for r in results]
-
-        avg_cost_saving = sum(cost_savings) / len(cost_savings) if cost_savings else 0
-        avg_grid_saving = sum(grid_savings) / len(grid_savings) if grid_savings else 0
-        avg_carbon_saving = sum(carbon_savings) / len(carbon_savings) if carbon_savings else 0
-
-        # Display results
-        st.success(f"✅ Completed {num_experiments} experiments!")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric("Average Cost Savings", f"{avg_cost_saving:.2f}%")
-        with col2:
-            st.metric("Average Grid Savings", f"{avg_grid_saving:.2f} kWh")
-        with col3:
-            st.metric("Average Carbon Savings", f"{avg_carbon_saving:.2f} kg CO₂")
-
-        # Plot distribution
-        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-
-        axes[0].hist(cost_savings, bins=10, color='green', alpha=0.7, edgecolor='black')
-        axes[0].set_xlabel("Cost Savings (%)")
-        axes[0].set_ylabel("Frequency")
-        axes[0].set_title("Distribution of Cost Savings")
-        axes[0].axvline(avg_cost_saving, color='red', linestyle='--', linewidth=2, label=f'Mean: {avg_cost_saving:.1f}%')
-        axes[0].legend()
-
-        axes[1].hist(grid_savings, bins=10, color='blue', alpha=0.7, edgecolor='black')
-        axes[1].set_xlabel("Grid Energy Savings (kWh)")
-        axes[1].set_ylabel("Frequency")
-        axes[1].set_title("Distribution of Grid Savings")
-        axes[1].axvline(avg_grid_saving, color='red', linestyle='--', linewidth=2, label=f'Mean: {avg_grid_saving:.1f} kWh')
-        axes[1].legend()
-
-        axes[2].hist(carbon_savings, bins=10, color='orange', alpha=0.7, edgecolor='black')
-        axes[2].set_xlabel("Carbon Savings (kg CO₂)")
-        axes[2].set_ylabel("Frequency")
-        axes[2].set_title("Distribution of Carbon Savings")
-        axes[2].axvline(avg_carbon_saving, color='red', linestyle='--', linewidth=2, label=f'Mean: {avg_carbon_saving:.1f} kg')
-        axes[2].legend()
-
-        plt.tight_layout()
-        st.pyplot(fig)
-
-        # Show detailed results table
-        with st.expander("📊 View Detailed Results"):
-            st.dataframe(results, use_container_width=True)
+plt.tight_layout()
+st.pyplot(fig)
 
 # ========================================
 # FOOTER
 # ========================================
 st.markdown("---")
 st.markdown("""
-**Smart Data Hub Energy Scheduler** | Optimizing energy, reducing carbon, managing temperature
+**Smart Data Hub Scheduler - Dataset Edition** |
+Upload real-world data or use built-in models |
+Powered by intelligent scheduling
 """)

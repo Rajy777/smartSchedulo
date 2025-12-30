@@ -1,0 +1,6 @@
+name,power_kw,duration_min,priority,deadline_hour
+Morning Batch,2.5,180,medium,14
+Critical Analysis,3.0,120,high,12
+Data Backup,1.2,90,low,22
+ML Training,4.0,240,medium,18
+Report Generation,1.5,60,low,20

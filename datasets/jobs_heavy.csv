@@ -1,0 +1,6 @@
+name,power_kw,duration_min,priority,deadline_hour
+GPU Training 1,5.0,300,high,16
+GPU Training 2,4.5,240,high,18
+Batch Processing,3.5,180,medium,14
+Database Sync,2.0,120,medium,20
+Archive,1.0,90,low,23
